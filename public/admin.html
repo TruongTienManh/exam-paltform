@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin - Quản lý lớp học</title>
+<link rel="stylesheet" href="/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+
+<!-- Màn hình đăng nhập -->
+<div id="loginScreen" class="center-box" style="display:none">
+  <h1>🧑‍🏫 Đăng nhập Admin</h1>
+  <div id="loginErr" class="error" style="display:none"></div>
+  <input id="loginUser" placeholder="Tài khoản" value="admin">
+  <input id="loginPass" type="password" placeholder="Mật khẩu">
+  <button style="width:100%" onclick="doLogin()">Đăng nhập</button>
+  <p style="color:var(--muted); font-size:12px; margin-top:16px">Mặc định: admin / admin123 (xem log server nếu đã đổi)</p>
+</div>
+
+<!-- Ứng dụng chính -->
+<div id="appScreen" class="app" style="display:none">
+  <div class="sidebar">
+    <h2>📘 Quản trị lớp học</h2>
+    <button class="navbtn" data-page="students" onclick="goto('students')">👥 Học sinh</button>
+    <button class="navbtn" data-page="exams" onclick="goto('exams')">📝 Đề thi</button>
+    <button class="navbtn" data-page="dashboard" onclick="goto('dashboard')">📊 Thống kê</button>
+    <hr style="border-color:#374151; margin:16px 0">
+    <button class="navbtn" onclick="logout()">🚪 Đăng xuất</button>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<script src="/api.js"></script>
+<script>
+let STATE = { exams: [], students: [], currentExamId: null };
+
+// ---- Khởi động: kiểm tra đã đăng nhập chưa bằng cách gọi thử 1 API ----
+(async function init() {
+  try { await api('GET', '/api/admin/students'); showApp(); }
+  catch { showLogin(); }
+})();
+
+function showLogin() { $('#loginScreen').style.display = 'block'; $('#appScreen').style.display = 'none'; }
+function showApp() { $('#loginScreen').style.display = 'none'; $('#appScreen').style.display = 'flex'; goto('students'); }
+
+async function doLogin() {
+  try {
+    await api('POST', '/api/admin/login', { username: $('#loginUser').value, password: $('#loginPass').value });
+    showApp();
+  } catch (e) { $('#loginErr').textContent = e.message; $('#loginErr').style.display = 'block'; }
+}
+async function logout() { await api('POST', '/api/admin/logout'); location.reload(); }
+
+function goto(page) {
+  $$('.navbtn').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+  ({ students: renderStudents, exams: renderExams, dashboard: renderDashboard })[page]();
+}
+
+// ===================== TRANG HỌC SINH =====================
+async function renderStudents() {
+  STATE.students = await api('GET', '/api/admin/students');
+  $('#main').innerHTML = `
+    <h1>👥 Quản lý Học sinh</h1>
+    <div class="card">
+      <h3>Tạo tài khoản hàng loạt</h3>
+      <input id="className" placeholder="Tên lớp (VD: 12A1)">
+      <textarea id="namesList" rows="5" placeholder="Nhập mỗi họ tên 1 dòng, VD:&#10;Nguyễn Văn A&#10;Trần Thị B"></textarea>
+      <button onclick="generateAccounts()">⚡ Tạo tài khoản tự động</button>
+      <div id="genResult" style="margin-top:14px"></div>
+    </div>
+    <div class="card">
+      <h3>Danh sách học sinh (${STATE.students.length})</h3>
+      <table><thead><tr><th>Họ tên</th><th>Lớp</th><th>Tài khoản</th><th>Mật khẩu</th><th></th></tr></thead>
+      <tbody>${STATE.students.map(s => `
+        <tr><td>${s.full_name}</td><td>${s.class_name}</td><td>${s.username}</td><td>${s.password_plain}</td>
+        <td><button class="danger" onclick="deleteStudent(${s.id})">Xoá</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>`;
+}
+
+async function generateAccounts() {
+  const names = $('#namesList').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const class_name = $('#className').value.trim() || 'Chưa đặt tên';
+  if (!names.length) return alert('Vui lòng nhập ít nhất 1 họ tên');
+  const { accounts } = await api('POST', '/api/admin/students/generate', { names, class_name });
+  $('#genResult').innerHTML = `<p style="color:var(--success)">✅ Đã tạo ${accounts.length} tài khoản. In hoặc chụp lại bảng dưới để phát cho học sinh:</p>
+    <table><thead><tr><th>Họ tên</th><th>Tài khoản</th><th>Mật khẩu</th></tr></thead>
+    <tbody>${accounts.map(a => `<tr><td>${a.full_name}</td><td>${a.username}</td><td>${a.password_plain}</td></tr>`).join('')}</tbody></table>`;
+  renderStudents();
+}
+async function deleteStudent(id) { if (confirm('Xoá học sinh này?')) { await api('DELETE', `/api/admin/students/${id}`); renderStudents(); } }
+
+// ===================== TRANG ĐỀ THI =====================
+async function renderExams() {
+  STATE.exams = await api('GET', '/api/admin/exams');
+  $('#main').innerHTML = `
+    <h1>📝 Quản lý Đề thi</h1>
+    <div class="card">
+      <h3>Tạo đề thi mới</h3>
+      <input id="examTitle" placeholder="Tên đề thi (VD: Kiểm tra 15 phút - Chương 1)">
+      <div style="display:flex; gap:12px">
+        <input id="examDuration" type="number" placeholder="Thời gian (phút)" value="15">
+        <input id="examAttempts" type="number" placeholder="Số lượt làm tối đa" value="1">
+      </div>
+      <button onclick="createExam()">➕ Tạo đề thi</button>
+    </div>
+    <div class="card">
+      <h3>Danh sách đề thi</h3>
+      <table><thead><tr><th>Tên đề</th><th>Thời gian</th><th>Số lượt</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+      <tbody>${STATE.exams.map(e => `
+        <tr>
+          <td>${e.title}</td><td>${e.duration_minutes} phút</td><td>${e.max_attempts}</td>
+          <td><span class="badge ${e.is_open ? 'open' : 'closed'}">${e.is_open ? 'Đang mở' : 'Đã đóng'}</span></td>
+          <td>
+            <button class="secondary" onclick="manageQuestions(${e.id})">Câu hỏi</button>
+            <button class="secondary" onclick="toggleExam(${e.id}, ${e.is_open ? 0 : 1})">${e.is_open ? 'Đóng đề' : 'Mở đề'}</button>
+          </td>
+        </tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div id="questionPanel"></div>`;
+}
+
+async function createExam() {
+  const title = $('#examTitle').value.trim();
+  if (!title) return alert('Nhập tên đề thi');
+  await api('POST', '/api/admin/exams', {
+    title, duration_minutes: Number($('#examDuration').value), max_attempts: Number($('#examAttempts').value),
+  });
+  renderExams();
+}
+async function toggleExam(id, is_open) {
+  const e = STATE.exams.find(x => x.id === id);
+  await api('PATCH', `/api/admin/exams/${id}`, { is_open, duration_minutes: e.duration_minutes, max_attempts: e.max_attempts });
+  renderExams();
+}
+
+async function manageQuestions(examId) {
+  STATE.currentExamId = examId;
+  const questions = await api('GET', `/api/admin/exams/${examId}/questions`);
+  $('#questionPanel').innerHTML = `
+    <div class="card">
+      <h3>Ngân hàng câu hỏi (${questions.length} câu)</h3>
+      <p style="color:var(--muted); font-size:13px">Nhập nhanh theo định dạng mỗi câu cách nhau 1 dòng trống. Dòng đầu là câu hỏi, các dòng sau là đáp án, đáp án đúng đánh dấu bằng dấu * ở đầu.</p>
+      <textarea id="rawQuestions" rows="8" placeholder="1 + 1 = ?&#10;1&#10;*2&#10;3&#10;4&#10;&#10;Thủ đô Việt Nam là?&#10;Hà Nội&#10;TP.HCM"></textarea>
+      <button onclick="uploadQuestions()">⬆️ Thêm câu hỏi vào đề</button>
+      <table style="margin-top:16px"><thead><tr><th>Câu hỏi</th><th>Số đáp án</th><th></th></tr></thead>
+      <tbody>${questions.map(q => `<tr><td>${q.content}</td><td>${JSON.parse(q.choices_json).length}</td>
+        <td><button class="danger" onclick="deleteQuestion(${q.id})">Xoá</button></td></tr>`).join('')}</tbody></table>
+    </div>`;
+}
+
+// Parser đơn giản, không cần thư viện ngoài để xử lý text (Bước 4: hạn chế dependency)
+function uploadQuestions() {
+  const blocks = $('#rawQuestions').value.trim().split(/\n\s*\n/).filter(Boolean);
+  const questions = blocks.map(block => {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    const content = lines[0];
+    const choices = lines.slice(1).map(l => l.replace(/^\*/, ''));
+    const correct_index = lines.slice(1).findIndex(l => l.startsWith('*'));
+    return { content, choices, correct_index: correct_index < 0 ? 0 : correct_index };
+  });
+  api('POST', `/api/admin/exams/${STATE.currentExamId}/questions`, { questions })
+    .then(() => manageQuestions(STATE.currentExamId));
+}
+function deleteQuestion(id) { api('DELETE', `/api/admin/questions/${id}`).then(() => manageQuestions(STATE.currentExamId)); }
+
+// ===================== TRANG DASHBOARD THỐNG KÊ =====================
+async function renderDashboard() {
+  const exams = await api('GET', '/api/admin/exams');
+  $('#main').innerHTML = `
+    <h1>📊 Dashboard Thống kê</h1>
+    <div class="card">
+      <label>Chọn đề thi:</label>
+      <select id="examSelect" onchange="loadDashboard(this.value)">
+        <option value="">-- Chọn đề --</option>
+        ${exams.map(e => `<option value="${e.id}">${e.title}</option>`).join('')}
+      </select>
+    </div>
+    <div id="dashboardBody"></div>`;
+}
+
+async function loadDashboard(examId) {
+  if (!examId) return $('#dashboardBody').innerHTML = '';
+  const { attempts, stats } = await api('GET', `/api/admin/dashboard/${examId}`);
+  $('#dashboardBody').innerHTML = `
+    <div class="grid-3">
+      <div class="card stat-box"><div class="num">${stats.count}</div><div class="label">Học sinh đã nộp</div></div>
+      <div class="card stat-box"><div class="num">${stats.avg}</div><div class="label">Điểm trung bình</div></div>
+      <div class="card stat-box"><div class="num">${stats.max} / ${stats.min}</div><div class="label">Cao nhất / Thấp nhất</div></div>
+    </div>
+    <div class="card"><h3>Phân bố điểm số cả lớp</h3><canvas id="chartDist" height="90"></canvas></div>
+    <div class="card">
+      <h3>Chi tiết từng học sinh</h3>
+      <table><thead><tr><th>Học sinh</th><th>Lớp</th><th>Điểm</th><th>Trạng thái</th><th></th></tr></thead>
+      <tbody>${attempts.map(a => `
+        <tr><td>${a.full_name}</td><td>${a.class_name}</td><td>${a.score ?? '-'}</td>
+        <td>${a.submitted_at ? '✅ Đã nộp' : '⏳ Đang làm'}</td>
+        <td><button class="secondary" onclick="showHistory(${a.student_id}, '${a.full_name.replace(/'/g, '')}')">Xem tiến bộ</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div id="historyPanel"></div>`;
+
+  new Chart($('#chartDist'), {
+    type: 'bar',
+    data: {
+      labels: ['0-2', '2-4', '4-6', '6-8', '8-10'],
+      datasets: [{ label: 'Số học sinh', data: stats.buckets, backgroundColor: '#2563eb' }],
+    },
+    options: { plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } },
+  });
+}
+
+// Biểu đồ tiến bộ của 1 học sinh qua nhiều đề thi (đường tăng/giảm điểm theo thời gian)
+async function showHistory(studentId, name) {
+  const rows = await api('GET', `/api/admin/students/${studentId}/history`);
+  $('#historyPanel').innerHTML = `<div class="card"><h3>📈 Tiến bộ của ${name}</h3><canvas id="chartHistory" height="80"></canvas></div>`;
+  new Chart($('#chartHistory'), {
+    type: 'line',
+    data: {
+      labels: rows.map(r => r.title),
+      datasets: [{ label: 'Điểm số', data: rows.map(r => r.score), borderColor: '#16a34a', tension: .3 }],
+    },
+    options: { scales: { y: { beginAtZero: true, max: 10 } } },
+  });
+  $('#historyPanel').scrollIntoView({ behavior: 'smooth' });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Học sinh - Làm bài kiểm tra</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div id="loginScreen" class="center-box" style="display:none">
+  <h1>🧑‍🎓 Đăng nhập Học sinh</h1>
+  <div id="loginErr" class="error" style="display:none"></div>
+  <input id="loginUser" placeholder="Tài khoản (do giáo viên cấp)">
+  <input id="loginPass" type="password" placeholder="Mật khẩu">
+  <button style="width:100%" onclick="doLogin()">Đăng nhập</button>
+</div>
+
+<div id="appScreen" class="app" style="display:none">
+  <div class="sidebar">
+    <h2 id="studentName">🧑‍🎓 Học sinh</h2>
+    <button class="navbtn" onclick="renderExamList()">📋 Danh sách đề thi</button>
+    <hr style="border-color:#374151; margin:16px 0">
+    <button class="navbtn" onclick="logout()">🚪 Đăng xuất</button>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<script src="/api.js"></script>
+<script>
+let EXAM_STATE = { attemptId: null, questions: [], remaining: 0, timerRef: null };
+
+(async function init() {
+  try { await api('GET', '/api/student/exams'); showApp(); }
+  catch { showLogin(); }
+})();
+
+function showLogin() { $('#loginScreen').style.display = 'block'; $('#appScreen').style.display = 'none'; }
+function showApp() { $('#loginScreen').style.display = 'none'; $('#appScreen').style.display = 'flex'; renderExamList(); }
+
+async function doLogin() {
+  try {
+    const r = await api('POST', '/api/student/login', { username: $('#loginUser').value, password: $('#loginPass').value });
+    $('#studentName').textContent = '🧑‍🎓 ' + r.name;
+    showApp();
+  } catch (e) { $('#loginErr').textContent = e.message; $('#loginErr').style.display = 'block'; }
+}
+async function logout() { clearInterval(EXAM_STATE.timerRef); await api('POST', '/api/student/logout'); location.reload(); }
+
+// ===================== DANH SÁCH ĐỀ THI =====================
+async function renderExamList() {
+  const exams = await api('GET', '/api/student/exams');
+  $('#main').innerHTML = `
+    <h1>📋 Đề thi hiện có</h1>
+    ${exams.length === 0 ? '<p>Hiện chưa có đề thi nào được mở.</p>' : exams.map(e => `
+      <div class="card flex-between">
+        <div>
+          <h3 style="margin:0 0 6px">${e.title}</h3>
+          <p style="color:var(--muted); margin:0; font-size:13px">
+            ⏱ ${e.duration_minutes} phút · Lượt làm: ${e.attempts_used}/${e.max_attempts}
+          </p>
+        </div>
+        ${e.attempts_left > 0
+          ? `<button onclick="startExam(${e.id})">Bắt đầu làm bài</button>`
+          : `<span class="badge closed">Đã hết lượt</span>`}
+      </div>`).join('')}`;
+}
+
+// ===================== LÀM BÀI =====================
+async function startExam(examId) {
+  if (!confirm('Bắt đầu làm bài sẽ tính vào số lượt được phép. Bạn chắc chắn muốn bắt đầu?')) return;
+  const r = await api('POST', `/api/student/exams/${examId}/start`);
+  EXAM_STATE.attemptId = r.attempt_id;
+  await loadAttempt();
+}
+
+async function loadAttempt() {
+  const r = await api('GET', `/api/student/attempts/${EXAM_STATE.attemptId}`);
+  EXAM_STATE.questions = r.questions;
+  EXAM_STATE.remaining = r.remaining_seconds;
+  EXAM_STATE.answers = {};
+  renderExamPage();
+  clearInterval(EXAM_STATE.timerRef);
+  EXAM_STATE.timerRef = setInterval(tickTimer, 1000);
+}
+
+function renderExamPage() {
+  $('#main').innerHTML = `
+    <div class="timer" id="timerBox">⏱ --:--</div>
+    ${EXAM_STATE.questions.map((q, i) => `
+      <div class="q-card">
+        <b>Câu ${i + 1}:</b> ${q.content}
+        ${q.choices.map((c, ci) => `
+          <div class="choice" data-qid="${q.question_id}" data-ci="${ci}" onclick="selectChoice(${q.question_id}, ${ci}, this)">${c}</div>
+        `).join('')}
+      </div>`).join('')}
+    <button onclick="submitExam()">✅ Nộp bài</button>`;
+  updateTimerDisplay();
+}
+
+function selectChoice(qid, ci, el) {
+  $$(`.choice[data-qid="${qid}"]`).forEach(e => e.classList.remove('selected'));
+  el.classList.add('selected');
+  EXAM_STATE.answers[qid] = ci;
+  api('PATCH', `/api/student/attempts/${EXAM_STATE.attemptId}/answer`, { question_id: qid, chosen_index: ci }); // autosave
+}
+
+function tickTimer() {
+  EXAM_STATE.remaining--;
+  updateTimerDisplay();
+  if (EXAM_STATE.remaining <= 0) { clearInterval(EXAM_STATE.timerRef); submitExam(true); }
+}
+function updateTimerDisplay() {
+  const m = String(Math.floor(EXAM_STATE.remaining / 60)).padStart(2, '0');
+  const s = String(EXAM_STATE.remaining % 60).padStart(2, '0');
+  const box = $('#timerBox'); if (box) box.textContent = `⏱ ${m}:${s}`;
+}
+
+async function submitExam(auto) {
+  if (!auto && !confirm('Nộp bài ngay? Bạn sẽ không thể sửa đáp án sau khi nộp.')) return;
+  clearInterval(EXAM_STATE.timerRef);
+  const r = await api('POST', `/api/student/attempts/${EXAM_STATE.attemptId}/submit`);
+  $('#main').innerHTML = `<div class="center-box"><h1>🎉 Đã nộp bài!</h1><p>Điểm số của bạn: <b style="font-size:28px; color:var(--primary)">${r.score}/10</b></p>
+    <button onclick="renderExamList()">Quay lại danh sách đề thi</button></div>`;
+}
+</script>
+</body>
+</html>

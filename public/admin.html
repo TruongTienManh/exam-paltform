@@ -144,12 +144,27 @@ async function manageQuestions(examId) {
     <div class="card">
       <h3>Ngân hàng câu hỏi (${questions.length} câu)</h3>
       <p style="color:var(--muted); font-size:13px">Nhập nhanh theo định dạng mỗi câu cách nhau 1 dòng trống. Dòng đầu là câu hỏi, các dòng sau là đáp án, đáp án đúng đánh dấu bằng dấu * ở đầu.</p>
+      <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px">
+        <input type="file" id="fileInput" accept=".txt" style="display:none" onchange="handleFileUpload(event)">
+        <button class="secondary" onclick="$('#fileInput').click()">📂 Tải lên file .txt có sẵn</button>
+        <span style="color:var(--muted); font-size:12px">Soạn câu hỏi trong Word theo đúng định dạng trên → Save As → chọn kiểu "Plain Text (.txt)" → tải file đó lên đây</span>
+      </div>
       <textarea id="rawQuestions" rows="8" placeholder="1 + 1 = ?&#10;1&#10;*2&#10;3&#10;4&#10;&#10;Thủ đô Việt Nam là?&#10;Hà Nội&#10;TP.HCM"></textarea>
       <button onclick="uploadQuestions()">⬆️ Thêm câu hỏi vào đề</button>
       <table style="margin-top:16px"><thead><tr><th>Câu hỏi</th><th>Số đáp án</th><th></th></tr></thead>
       <tbody>${questions.map(q => `<tr><td>${q.content}</td><td>${JSON.parse(q.choices_json).length}</td>
         <td><button class="danger" onclick="deleteQuestion(${q.id})">Xoá</button></td></tr>`).join('')}</tbody></table>
     </div>`;
+}
+
+// Đọc file .txt bằng FileReader gốc của trình duyệt (Bước 3: Native, không cần thư viện ngoài)
+function handleFileUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => { $('#rawQuestions').value = e.target.result; };
+  reader.readAsText(file, 'UTF-8'); // UTF-8 để đọc đúng dấu tiếng Việt
+  event.target.value = ''; // reset để chọn lại cùng 1 file vẫn kích hoạt được
 }
 
 // Parser đơn giản, không cần thư viện ngoài để xử lý text (Bước 4: hạn chế dependency)
